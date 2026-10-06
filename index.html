@@ -6,7 +6,135 @@
 
     <title>ARMR Assignment 1</title>
 
+    <script>
+        /*
+         * Fix for Android phones with multiple rear cameras.
+         * AR.js may select an incorrect rear camera and produce
+         * an extremely zoomed-in camera feed.
+         */
+
+        (function () {
+            if (!navigator.mediaDevices ||
+                !navigator.mediaDevices.getUserMedia ||
+                !navigator.mediaDevices.enumerateDevices) {
+                return;
+            }
+
+            const originalGetUserMedia =
+                navigator.mediaDevices.getUserMedia.bind(
+                    navigator.mediaDevices
+                );
+
+            let cameraSelectionDone = false;
+
+            navigator.mediaDevices.getUserMedia = async function (constraints) {
+
+                if (cameraSelectionDone ||
+                    !constraints ||
+                    !constraints.video) {
+                    return originalGetUserMedia(constraints);
+                }
+
+                cameraSelectionDone = true;
+
+                try {
+                    /*
+                     * First request:
+                     * obtain permission and get the normal environment camera.
+                     */
+                    const firstStream =
+                        await originalGetUserMedia(constraints);
+
+                    /*
+                     * Now that permission has been granted,
+                     * camera labels become available.
+                     */
+                    const devices =
+                        await navigator.mediaDevices.enumerateDevices();
+
+                    const cameras = devices.filter(
+                        device => device.kind === "videoinput"
+                    );
+
+                    /*
+                     * Look for the normal rear/main camera.
+                     *
+                     * Avoid:
+                     * - ultra wide
+                     * - macro
+                     * - depth
+                     * - telephoto
+                     * - zoom
+                     */
+                    const preferredCamera = cameras.find(device => {
+                        const label = device.label.toLowerCase();
+
+                        const isRear =
+                            label.includes("back") ||
+                            label.includes("rear") ||
+                            label.includes("environment");
+
+                        const isSpecialLens =
+                            label.includes("ultra") ||
+                            label.includes("wide") ||
+                            label.includes("macro") ||
+                            label.includes("depth") ||
+                            label.includes("tele") ||
+                            label.includes("zoom");
+
+                        return isRear && !isSpecialLens;
+                    });
+
+                    /*
+                     * If we found a likely main rear camera,
+                     * stop the temporary stream and request that
+                     * camera explicitly.
+                     */
+                    if (preferredCamera) {
+
+                        firstStream.getTracks().forEach(
+                            track => track.stop()
+                        );
+
+                        const newConstraints = {
+                            ...constraints,
+                            video: {
+                                ...(typeof constraints.video === "object"
+                                    ? constraints.video
+                                    : {}),
+                                deviceId: {
+                                    exact: preferredCamera.deviceId
+                                }
+                            }
+                        };
+
+                        return originalGetUserMedia(newConstraints);
+                    }
+
+                    /*
+                     * If the browser doesn't expose useful camera
+                     * names, keep the original environment stream.
+                     */
+                    return firstStream;
+
+                } catch (error) {
+
+                    console.error(
+                        "Camera selection error:",
+                        error
+                    );
+
+                    /*
+                     * Fall back to AR.js's normal camera request.
+                     */
+                    return originalGetUserMedia(constraints);
+                }
+            };
+        })();
+    </script>
+
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+
     <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.8/aframe/build/aframe-ar.js"></script>
 </head>
 
@@ -15,7 +143,7 @@
     <a-scene
         embedded
         vr-mode-ui="enabled: false"
-        arjs="sourceType: webcam; sourceWidth: 640; sourceHeight: 480; debugUIEnabled: false;"
+        arjs="sourceType: webcam; debugUIEnabled: false;">
 
         <a-marker preset="hiro">
 
